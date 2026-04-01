@@ -131,6 +131,7 @@ body {
   border-width: var(--imgborder);
 }
 img {
+  -webkit-user-select: none;
   user-select: none;
 }
 #rep{
@@ -237,6 +238,7 @@ img {
   border: medium solid white;
   background-color: var(--halfblack);
   opacity: var(--opacity);
+  -webkit-user-select: none;
   user-select: none;
   cursor: pointer;
 }
