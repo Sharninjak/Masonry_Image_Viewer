@@ -229,6 +229,148 @@ img {
 #addsource:hover {
   opacity: 1;
 }
+#gallerybtn {
+  top: 140px;
+  left: 20px;
+  font-size: large;
+  opacity: 0.6;
+}
+#gallerybtn:hover {
+  opacity: 1;
+}
+#gallerybar {
+  position: fixed;
+  z-index: 2;
+  top: 0;
+  left: 0;
+  width: min(520px, 90vw);
+  height: 100vh;
+  overflow-y: auto;
+  background-color: var(--halfblack);
+  display: none;
+  padding: 16px;
+  box-sizing: border-box;
+}
+#gallerybar.show {
+  display: block;
+}
+#gallerycontent {
+  padding-bottom: 40px;
+}
+.gallery-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  font-size: large;
+  font-weight: bold;
+}
+.gallery-save-new-btn {
+  padding: 5px 12px;
+  border-radius: 50px;
+  border: medium solid var(--halfwhite);
+  background-color: transparent;
+  color: white;
+  cursor: pointer;
+  font-size: small;
+}
+.gallery-save-new-btn:hover {
+  border-color: white;
+}
+.gallery-item {
+  border: medium solid var(--halfwhite);
+  border-radius: 12px;
+  padding: 12px;
+  margin-bottom: 10px;
+}
+.gallery-item.current {
+  border-color: white;
+}
+.gallery-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+.gallery-name {
+  font-size: medium;
+  font-weight: bold;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gallery-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.gallery-actions > button,
+.gallery-manage-btns > button {
+  padding: 4px 10px;
+  border-radius: 50px;
+  border: medium solid var(--halfwhite);
+  background-color: transparent;
+  color: white;
+  cursor: pointer;
+  font-size: small;
+  white-space: nowrap;
+}
+.gallery-actions > button:hover,
+.gallery-manage-btns > button:hover {
+  border-color: white;
+}
+.gallery-meta {
+  margin-top: 8px;
+  font-size: small;
+  opacity: 0.8;
+}
+.gallery-info-line {
+  margin-top: 4px;
+}
+.gallery-manage-btns {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+.gallery-entries {
+  margin-top: 8px;
+  border-top: 1px solid var(--halfwhite);
+  padding-top: 8px;
+}
+.gallery-entry {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+  gap: 8px;
+}
+.gallery-entry > span {
+  font-size: small;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+.gallery-entry > button {
+  padding: 2px 8px;
+  border-radius: 50px;
+  border: medium solid var(--halfwhite);
+  background-color: transparent;
+  color: white;
+  cursor: pointer;
+  font-size: small;
+  flex-shrink: 0;
+}
+.gallery-entry > button:hover {
+  border-color: white;
+}
+.gallery-empty {
+  text-align: center;
+  opacity: 0.6;
+  padding: 20px;
+}
 .scrollbtn {
   position: fixed;
   z-index: 1;
