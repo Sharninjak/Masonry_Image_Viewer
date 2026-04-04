@@ -1,6 +1,6 @@
 {
   "name": "Masonry Image Viewer",
-  "short_name": "",
+  "short_name": "Masonry",
   "theme_color": "black",
   "background_color": "black",
   "start_url": "./",
@@ -24,14 +24,12 @@
     {
       "src": "512x512.png",
       "type": "image/png",
-      "sizes": "512x512",
-      "form_factor": "narrow"
+      "sizes": "512x512"
     },
     {
       "src": "512x512.png",
       "type": "image/png",
-      "sizes": "512x512",
-      "form_factor": "wide"
+      "sizes": "512x512"
     }
   ],
   "description": "",

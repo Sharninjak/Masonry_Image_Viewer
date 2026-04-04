@@ -151,56 +151,12 @@ async function getWH(file) {
 }
 
 /**
- * 节流:在 ms 时间窗内最多执行一次.
- * 这里当前文件未实际使用,保留为通用工具.
- */
-function throttle(func, ms = 1000) {
-  let timeout;
-  let con = this;
-  return function () {
-    if (timeout) return;
-    func.apply(con, arguments);
-    timeout = setTimeout(() => (timeout = null), ms);
-  };
-}
-
-/**
- * 防抖:在连续触发结束后再执行.
- * 这里当前文件未实际使用,保留为通用工具.
- */
-function debounce(func, ms = 1000) {
-  let timeout;
-  let con = this;
-  return function () {
-    clearTimeout(timeout);
-    timeout = setTimeout(() => func.apply(con, arguments), ms);
-  };
-}
-
-/**
  * 生成数值区间数组 [start, end) ,步长 step.
  * @returns {number[]} 常用于像素数据遍历.
  */
 function range(start, end, step = 1) {
   let arr = [];
   for (let i = start; i < end; i += step) arr.push(i);
-  return arr;
-}
-
-/**
- * 将对象某一路径下的嵌套对象扁平化为值数组.
- * 当前文件未被使用,属于预留工具函数.
- */
-function flatObj(obj, path) {
-  obj = path.split("/").reduce((obj, name) => obj[name], obj);
-  function recurse(obj) {
-    for (let key in obj) {
-      if (typeof obj[key] === "object") recurse(obj[key]);
-      else arr.push(obj[key]);
-    }
-  }
-  let arr = [];
-  recurse(obj);
   return arr;
 }
 
@@ -216,12 +172,9 @@ function formatSize(bytes) {
   if (bytes < 1024) return `${bytes} B`;
   else if (bytes < MB) return `${(bytes / 1024).toFixed(2)} KB`;
   else if (bytes < GB) return `${(bytes / MB).toFixed(2)} MB`;
+  else return `${(bytes / GB).toFixed(2)} GB`;
 }
 
-// sleep: Promise 版延时工具(当前文件未使用).
-let sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-// log: console.log 简写(当前文件未使用).
-let log = console.log;
 // getEl/newEl: DOM 获取与创建简写,减少重复代码.
 let getEl = (id) => document.getElementById(id);
 let newEl = (tag) => document.createElement(tag);
@@ -230,6 +183,8 @@ const GALLERY_DB_VERSION = 3;
 const GALLERY_STORE = "galleries";
 const HANDLES_STORE = "handles"; // FileSystemHandle 单独存储，与元数据隔离
 const HISTORY_STORE = "fileLists"; // 保留用于 v1 数据迁移
+// 扩展名白名单：扫描时过滤非图片文件（无需调用 getFile()）
+const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.avif']);
 // #endregion
 
 class MasonryViewer {
@@ -272,6 +227,12 @@ class MasonryViewer {
       visImgs: new Set(),
       // currentGalleryId: string|null,当前已加载图库的 ID.
       currentGalleryId: null,
+      // pendingRenameId: string|null,新建图库后待内联重命名的图库 ID.
+      pendingRenameId: null,
+      // slideshowTimer: number|null,幻灯片自动翻页计时器 ID.
+      slideshowTimer: null,
+      // epoch: number,每次 reflow/resetAll 递增,用于丢弃跨代的过时 onloaded 回调.
+      epoch: 0,
     };
 
     // configs: 需要持久化到 CSS 变量与 localStorage 的配置项 id 列表.
@@ -333,10 +294,17 @@ class MasonryViewer {
       filtmono: getEl("filtmono"),
       hint: getEl("hint"),
       hintmain: getEl("hintmain"),
+      addfolder: getEl("addfolder"),
+      addfiles: getEl("addfiles"),
+      addsourcemenu: getEl("addsourcemenu"),
       gallerybtn: getEl("gallerybtn"),
+      galleryoverlay: getEl("galleryoverlay"),
       gallerybar: getEl("gallerybar"),
       gallerycontent: getEl("gallerycontent"),
+      helpoverlay: getEl("helpoverlay"),
       historybox: getEl("historybox"),
+      playslide: getEl("playslide"),
+      zoominfo: getEl("zoominfo"),
       imgbox: getEl("imgbox"),
       indicator: getEl("indicator"),
       jumpTo: getEl("jumpTo"),
@@ -428,16 +396,39 @@ class MasonryViewer {
     this.ui.nextimg.onclick = this.naviZoom.bind(this);
 
     document.onkeydown = this.handleKeyDown.bind(this);
+    document.addEventListener("mousedown", (e) => {
+      if (e.button === 1 && this.ui.gallerybar.classList.contains("show")) {
+        e.preventDefault();
+        this.closeGalleryPanel();
+      }
+    });
     
     this.ui.resort.onclick = () => this.reflow();
     this.ui.pause.onclick = () => (this.state.loadingAll = 0);
     this.ui.totop.onclick = () => this.docEl.scrollTo(0, 0);
     this.ui.toend.onclick = () => this.docEl.scrollTo(0, this.docEl.scrollHeight);
     this.ui.sidebtn.onclick = () => this.ui.sidebar.classList.toggle("show");
-    this.ui.addsource.onclick = this.handleAddSourceClick.bind(this);
-    this.ui.gallerybtn.onclick = () => this.ui.gallerybar.classList.toggle("show");
+    this.ui.addsource.onclick = (e) => {
+      e.stopPropagation();
+      this.ui.addsourcemenu.classList.toggle("show");
+    };
+    this.ui.addfolder.onclick = () => {
+      this.ui.addsourcemenu.classList.remove("show");
+      this.handleAddFolder();
+    };
+    this.ui.addfiles.onclick = () => {
+      this.ui.addsourcemenu.classList.remove("show");
+      this.handleAddFiles();
+    };
+    this.ui.playslide.onclick = () => this.toggleSlideshow();
+    this.ui.helpoverlay.onclick = () => this.ui.helpoverlay.classList.remove("show");
+    this.ui.gallerybtn.onclick = () => {
+      const show = this.ui.gallerybar.classList.toggle("show");
+      this.ui.galleryoverlay.classList.toggle("show", show);
+    };
+    this.ui.galleryoverlay.onclick = () => this.closeGalleryPanel();
 
-    // Close sidebar / gallerybar when clicking outside
+    // Close menus when clicking outside
     document.addEventListener('click', (e) => {
       if (
         this.ui.sidebar.classList.contains('show') &&
@@ -451,7 +442,14 @@ class MasonryViewer {
         !this.ui.gallerybar.contains(e.target) &&
         !this.ui.gallerybtn.contains(e.target)
       ) {
-        this.ui.gallerybar.classList.remove('show');
+        this.closeGalleryPanel();
+      }
+      if (
+        this.ui.addsourcemenu.classList.contains('show') &&
+        !this.ui.addsourcemenu.contains(e.target) &&
+        !this.ui.addsource.contains(e.target)
+      ) {
+        this.ui.addsourcemenu.classList.remove('show');
       }
     });
 
@@ -653,52 +651,50 @@ class MasonryViewer {
     }
   }
 
-  async handleAddSourceClick() {
-    const pickFolder = confirm("确定:添加文件夹\n取消:添加图片文件");
+  async handleAddFolder() {
     try {
-      if (pickFolder) {
-        const dirHandle = await showDirectoryPicker({
-          mode: "readwrite",
-          startIn: "pictures",
-        });
-        await this.importFromHandles([dirHandle]);
-        return;
-      }
-      const fileHandles = await showOpenFilePicker({
-        multiple: true,
-        types: [
-          {
-            description: "Images",
-            accept: {
-              "image/*": [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".avif"],
-            },
-          },
-        ],
-        excludeAcceptAllOption: false,
-      });
-      await this.importFromHandles(fileHandles);
+      const dirHandle = await showDirectoryPicker({ mode: "readwrite", startIn: "pictures" });
+      await this.importFromHandles([dirHandle]);
     } catch (err) {
       if (err.name !== "AbortError") {
-        console.error("Error selecting source:", err);
+        console.error("Error selecting folder:", err);
         alert("添加失败，请重试");
       }
     }
   }
 
-  async importFromHandles(handles, { saveToGallery = true } = {}) {
+  async handleAddFiles() {
+    try {
+      const fileHandles = await showOpenFilePicker({
+        multiple: true,
+        types: [{ description: "Images", accept: { "image/*": [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".avif"] } }],
+        excludeAcceptAllOption: false,
+      });
+      await this.importFromHandles(fileHandles);
+    } catch (err) {
+      if (err.name !== "AbortError") {
+        console.error("Error selecting files:", err);
+        alert("添加失败，请重试");
+      }
+    }
+  }
+
+  async importFromHandles(handles, { saveToGallery = true, replace = false } = {}) {
     if (!handles?.length) return;
+    if (replace) this.resetAll();
     this.initLoad();
-    await this.handle(handles);
-    if (this.ui.sortby.value !== this.enums.default || this.ui.order.value !== this.enums.asc) {
+    const isFreshLoad = this.state.allData.size === 0;
+    if (isFreshLoad) {
+      // 首次/替换加载：先建立列结构，让 loadNext 与扫描并行，实现渐进展示
       this.reflow();
     }
+    // 扫描文件，isFreshLoad 时每 push 一条 loadNext 即消费；追加模式则只填充 allData
+    await this.handle(handles);
+    // 扫描完成后用完整 allData 做最终排序重排
+    this.reflow();
     if (saveToGallery) {
-      const isNewGallery = await this.addToCurrentGallery(handles);
+      await this.addToCurrentGallery(handles);
       await this.renderGalleryList();
-      // 新图库创建后自动打开管理面板，告知用户已保存
-      if (isNewGallery) {
-        this.ui.gallerybar.classList.add("show");
-      }
     } else {
       await this.renderGalleryList();
     }
@@ -913,6 +909,7 @@ class MasonryViewer {
       await this._tryPutHandle(entries[i].id, newHandles[i]);
     }
     this.state.currentGalleryId = newGallery.id;
+    this.state.pendingRenameId = newGallery.id;
     return true; // 新图库已创建
   }
 
@@ -1013,10 +1010,14 @@ class MasonryViewer {
         needReselect.push(entry);
       }
 
-      // 对无法获取 handle 的条目，提示用户重新选择
+      // 对无法获取 handle 的条目，提示用户重新选择或移除
       for (const entry of needReselect) {
-        const msg = `图库中 "${entry.name}" 的访问已失效，请重新选择该${entry.kind === "directory" ? "文件夹" : "文件"}`;
-        if (!confirm(msg)) continue;
+        const kind = entry.kind === "directory" ? "文件夹" : "文件";
+        const msg = `图库来源 "${entry.name}" 无法访问（可能已被删除或移动）。\n\n点击"确定"重新选择${kind}，点击"取消"从图库中移除该来源。`;
+        if (!confirm(msg)) {
+          await this.removeFromGallery(galleryId, entry.id);
+          continue;
+        }
         try {
           let newHandle;
           if (entry.kind === "directory") {
@@ -1042,7 +1043,7 @@ class MasonryViewer {
         return;
       }
 
-      await this.importFromHandles(handles, { saveToGallery: false });
+      await this.importFromHandles(handles, { saveToGallery: false, replace: true });
       this.state.currentGalleryId = galleryId;
       await this.putGallery({ ...gallery, updatedAt: Date.now() });
       await this.renderGalleryList();
@@ -1070,10 +1071,6 @@ class MasonryViewer {
       const header = newEl("div");
       header.className = "gallery-header";
 
-      const nameEl = newEl("div");
-      nameEl.className = "gallery-name";
-      nameEl.innerText = gallery.name + (isCurrent ? "  (当前)" : "");
-
       const actions = newEl("div");
       actions.className = "gallery-actions";
 
@@ -1081,7 +1078,7 @@ class MasonryViewer {
       loadBtn.innerText = "加载";
       loadBtn.onclick = async (e) => {
         e.stopPropagation();
-        this.ui.gallerybar.classList.remove("show");
+        this.closeGalleryPanel();
         await this.loadGallery(gallery.id);
       };
 
@@ -1106,7 +1103,31 @@ class MasonryViewer {
       };
 
       actions.append(loadBtn, renameBtn, delBtn);
-      header.append(nameEl, actions);
+
+      // 新建图库时显示内联重命名输入框，否则显示普通名称
+      if (gallery.id === this.state.pendingRenameId) {
+        const nameInput = newEl("input");
+        nameInput.type = "text";
+        nameInput.value = gallery.name;
+        nameInput.className = "gallery-name-input";
+        const saveRename = async () => {
+          const newName = nameInput.value.trim();
+          this.state.pendingRenameId = null;
+          if (newName && newName !== gallery.name) {
+            await this.editGalleryMetadata(gallery.id, { name: newName });
+          }
+          await this.renderGalleryList();
+        };
+        nameInput.onblur = saveRename;
+        nameInput.onkeydown = (e) => { if (e.key === "Enter") nameInput.blur(); e.stopPropagation(); };
+        requestAnimationFrame(() => nameInput.focus());
+        header.append(nameInput, actions);
+      } else {
+        const nameEl = newEl("div");
+        nameEl.className = "gallery-name";
+        nameEl.innerText = gallery.name + (isCurrent ? "  (当前)" : "");
+        header.append(nameEl, actions);
+      }
 
       const meta = newEl("div");
       meta.className = "gallery-meta";
@@ -1177,7 +1198,7 @@ class MasonryViewer {
       this.ui.historybox.replaceChildren();
       const title = newEl("div");
       title.className = "history-title";
-      title.innerText = "图库";
+      title.innerText = "临时图库";
       this.ui.historybox.appendChild(title);
       if (!galleries.length) {
         const empty = newEl("div");
@@ -1208,14 +1229,15 @@ class MasonryViewer {
     panelHeader.className = "gallery-panel-header";
     const panelTitle = newEl("span");
     panelTitle.innerText = "图库管理";
-    panelHeader.appendChild(panelTitle);
 
     if (this.state.currentGalleryId) {
       const saveNewBtn = newEl("button");
       saveNewBtn.className = "gallery-save-new-btn";
       saveNewBtn.innerText = "另存为新图库";
       saveNewBtn.onclick = () => this.saveAsNewGallery();
-      panelHeader.appendChild(saveNewBtn);
+      panelHeader.append(panelTitle, saveNewBtn);
+    } else {
+      panelHeader.appendChild(panelTitle);
     }
 
     this.ui.gallerycontent.appendChild(panelHeader);
@@ -1233,23 +1255,51 @@ class MasonryViewer {
   }
 
   initLoad() {
-    if (this.ui.loadedcount.value > 0) return;
-    if (this.ui.sortby.value === this.enums.default && this.ui.order.value === this.enums.asc) this.reflow();
+    if (!this.ui.hint?.isConnected) return;
     this.docEl.style.setProperty("--opacity", "0");
     this.ui.hint.remove();
   }
 
+  resetAll() {
+    // 重置全部视图状态，用于加载新图库时完全替换当前内容.
+    // epoch 递增使所有进行中的 onloaded 回调失效，避免旧图片混入新视图.
+    this.state.epoch++;
+    this.state.allData = new Map();
+    this.state.toLoad = new Queue();
+    this.state.loading = 0;
+    this.state.loadingAll = 0;
+    this.state.dircount = 0;
+    this.state.marks = [];
+    this.state.imgcols = [];
+    this.state.visImgs.clear();
+    this.state.currdir = null;
+    this.state.currentGalleryId = null;
+    this.ui.totalcount.value = 0;
+    this.ui.totalcount.innerText = '0';
+    this.ui.loadedcount.value = 0;
+    this.ui.loadedcount.innerText = '0';
+    this.ui.showcount.value = 0;
+    this.ui.showcount.innerText = '0';
+    this.ui.dirtree.children[0].replaceChildren();
+    this.ui.imgbox.replaceChildren();
+  }
+
   async handle(items, dir = "", folderUl = this.ui.dirtree.children[0]) {
+    /**
+     * 扫描目录/文件列表，将图片路径压入 toLoad 队列。
+     * 优化：不调用 getFile()，改用扩展名过滤，大幅提速（10,000 文件从秒级降至毫秒级）。
+     * FileSystemFileHandle 本身（fileHandle）存储在 allData，实际 File 对象在 loadNext() 中懒加载。
+     */
     for await (let item of items) {
       let name = item.name;
       let path = dir + "/" + name;
       if (this.state.allData.has(path)) continue;
-      
+
       let index = this.state.allData.size;
 
       if (item.kind === "directory") {
         this.state.dircount++;
-        let val = this.ui.totalcount.value;
+        let prevTotal = this.ui.totalcount.value;
         let li = newEl("li");
         li.innerText = name;
         li.id = "li" + index;
@@ -1261,19 +1311,16 @@ class MasonryViewer {
         this.state.toLoad.push(path);
         this.state.allData.set(path, index);
         await this.handle(item.values(), path, ul);
-        if (val === this.ui.totalcount.value) {
+        if (prevTotal === this.ui.totalcount.value) {
           li.style.display = "none";
           ul.style.display = "none";
         }
-      }
-      if (item.kind === "file") {
-        let file = await item.getFile();
-        if (!file.type.match(/image.*/)) continue;
+      } else if (item.kind === "file") {
+        // 通过扩展名过滤，无需 getFile()
+        const ext = name.slice(name.lastIndexOf('.')).toLowerCase();
+        if (!IMAGE_EXTS.has(ext)) continue;
         this.ui.totalcount.value++;
-        file.dir = dir;
-        file.path = path;
-        file.index = index;
-        this.state.allData.set(path, { file });
+        this.state.allData.set(path, { fileHandle: item, name, dir, path, index });
         this.state.toLoad.push(path);
         this.ui.totalcount.innerText = this.ui.totalcount.value;
       }
@@ -1282,6 +1329,7 @@ class MasonryViewer {
 
   reflow() {
     if (!this.ui.filtmono.active && !this.ui.filtborder.active && this.ui.revert.active) return;
+    this.state.epoch++;
     this.ui.imgbox.querySelectorAll(".mark").forEach((el) => {
       el.remove();
     });
@@ -1310,12 +1358,16 @@ class MasonryViewer {
       items = items
         .filter((p) => typeof this.state.allData.get(p) === "object")
         .sort((a, b) => {
-            let fileA = this.state.allData.get(a).file;
-            let fileB = this.state.allData.get(b).file;
+            let dataA = this.state.allData.get(a);
+            let dataB = this.state.allData.get(b);
             if (key === 'name') {
-              return fileA.name.localeCompare(fileB.name, undefined, {numeric: true, sensitivity: 'base'});
+              // 扫描时已记录 name，无需 file 对象即可排序
+              const nameA = dataA.name || dataA.file?.name || '';
+              const nameB = dataB.name || dataB.file?.name || '';
+              return nameA.localeCompare(nameB, undefined, {numeric: true, sensitivity: 'base'});
             }
-            return fileA[key] - fileB[key];
+            // date/size 排序需要 file 元数据；未懒加载时值为 0（保持扫描顺序），可点击"重排"刷新
+            return (dataA.file?.[key] || 0) - (dataB.file?.[key] || 0);
         });
     if (this.ui.order.value === this.enums.desc) items.reverse();
     this.state.toLoad.items = items;
@@ -1343,6 +1395,18 @@ class MasonryViewer {
         this.state.marks.push(mark);
         continue;
       }
+      // 懒加载：扫描时未调用 getFile()，在此按需获取 File 对象
+      if (!data.file) {
+        try {
+          const file = await data.fileHandle.getFile();
+          file.dir = data.dir;
+          file.path = data.path;
+          file.index = data.index;
+          data.file = file;
+        } catch (e) {
+          continue; // 文件已被删除或无法访问，跳过
+        }
+      }
       let file = data.file;
       let w, h, img;
       if (this.state.maxR) {
@@ -1359,7 +1423,12 @@ class MasonryViewer {
         this.loadImg(wrap);
         continue;
       }
+      const capturedEpoch = this.state.epoch;
       let onloaded = () => {
+        if (this.state.epoch !== capturedEpoch) {
+          URL.revokeObjectURL(img?.src);
+          return; // 跨代回调，丢弃（reflow/resetAll 已切换新纪元）
+        }
         URL.revokeObjectURL(img.src);
         this.ui.loadedcount.innerText = this.ui.loadedcount.value++ + 1;
         let wrap = newEl("div");
@@ -1372,7 +1441,16 @@ class MasonryViewer {
       };
       if (data.img) {
         img = data.img;
-        onloaded();
+        if (img.complete) {
+          // 图片已解码完成，可以直接渲染
+          onloaded();
+        } else {
+          // 图片仍在解码中：替换旧的（已过期 epoch 的）回调，等待解码完成
+          // 不立即调用 onloaded，避免 naturalWidth=0 时创建空白 wrap
+          this.state.loading++;
+          img.onload = onloaded;
+          img.onerror = onloaded;
+        }
       } else {
         img = new Image();
         data.img = img;
@@ -1399,7 +1477,7 @@ class MasonryViewer {
     let imgInfo = [
       formatSize(file.size),
       `${img.naturalWidth}x${img.naturalHeight}`,
-      file.lastModifiedDate.toLocaleString().replaceAll("/", "-"),
+      new Date(file.lastModified).toLocaleString().replaceAll("/", "-"),
       file.name,
       file.dir,
     ];
@@ -1553,6 +1631,12 @@ class MasonryViewer {
     this.ui.cover.appendChild(this.state.zoom);
     this.ui.cover.classList.add("show");
     this.ui.cover.focus();
+    // 显示文件名、分辨率、大小
+    const file = this.state.allData.get(this.state.zoom.path)?.file;
+    if (file) {
+      this.ui.zoominfo.textContent = `${file.name}  ${this.state.zoom.naturalWidth}×${this.state.zoom.naturalHeight}  ${formatSize(file.size)}`;
+      this.ui.zoominfo.style.display = "block";
+    }
   }
 
   zoomImg(e) {
@@ -1588,17 +1672,41 @@ class MasonryViewer {
   hideCover() {
     // 退出缩放状态,恢复图片原位并清理缩放相关状态.
     if (!this.state.zoom) return;
+    this.stopSlideshow();
     this.state.zoom.removeAttribute("style");
     this.state.zoom.removeAttribute("class");
     getEl("rep").replaceWith(this.state.zoom);
     this.state.zoom = null;
     this.ui.cover.classList.remove("show");
+    this.ui.zoominfo.style.display = "none";
+  }
+
+  toggleSlideshow() {
+    if (this.state.slideshowTimer) {
+      this.stopSlideshow();
+    } else {
+      this.startSlideshow();
+    }
+  }
+
+  startSlideshow() {
+    this.ui.playslide.textContent = "⏸";
+    this.state.slideshowTimer = setInterval(() => {
+      this.naviZoom({ target: this.ui.nextimg, stopPropagation() {} });
+    }, 3000);
+  }
+
+  stopSlideshow() {
+    if (!this.state.slideshowTimer) return;
+    clearInterval(this.state.slideshowTimer);
+    this.state.slideshowTimer = null;
+    this.ui.playslide.textContent = "▶";
   }
 
   handleCoverMouseDown(e) {
     // 左键/右键切换上一张/下一张,中键或 Esc 键退出缩放.
     if (!this.state.zoom) return; // 安全检查: 确保当前处于缩放状态
-    if (e.target === this.ui.previmg || e.target === this.ui.nextimg) return; // 避免重复触发导航事件
+    if (e.target === this.ui.previmg || e.target === this.ui.nextimg || e.target === this.ui.playslide) return; // 避免重复触发导航事件
     if (e.button === 0) { // 左键
       this.naviZoom({ target: this.ui.previmg, stopPropagation() {} });
       // stopPropagation 避免触发 cover 的 onclick 导致的 toggleZoom
@@ -1615,15 +1723,27 @@ class MasonryViewer {
     }
   }
 
+  closeGalleryPanel() {
+    this.ui.gallerybar.classList.remove("show");
+    this.ui.galleryoverlay.classList.remove("show");
+  }
+
   handleKeyDown(e) {
-    if (!this.state.zoom) return;
-    if (
-      e.key === "Escape" ||
-      e.key === "s"
-    ) {
-      this.hideCover();
+    const inInput = e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA";
+    if (e.key === "/") {
+      if (!inInput) this.ui.helpoverlay.classList.toggle("show");
       return;
     }
+    // 图库管理面板关闭（优先于缩放模式判断）
+    if ((e.key === "Escape" || (!inInput && e.key === "s")) &&
+        this.ui.gallerybar.classList.contains("show")) {
+      this.closeGalleryPanel();
+      return;
+    }
+    if (!this.state.zoom) return;
+    if (e.key === "Escape") { this.hideCover(); return; }
+    if (inInput) return; // 在输入框中时，字母/方向键不触发全屏快捷键
+    if (e.key === "s") { this.hideCover(); return; }
     if (e.key === "ArrowRight" || e.key === "d") {
       this.naviZoom({ target: this.ui.nextimg, key: e.key, stopPropagation() {} });
       return;
@@ -1649,7 +1769,7 @@ class MasonryViewer {
     index +=
       e.target === this.ui.nextimg || e.key === "ArrowRight" || e.key === "d" ? 1 : -1;
     let wrap = getEl("img" + index);
-    if (!wrap) return;
+    if (!wrap) { this.stopSlideshow(); return; }
     if (!this.state.visImgs.has(index)) wrap.scrollIntoView();
     this.hideCover();
     this.toggleZoom({ target: wrap.children[0] });
