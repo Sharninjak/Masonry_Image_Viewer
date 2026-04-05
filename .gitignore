@@ -1,0 +1,6 @@
+# Build output (single-file release artifact)
+dist/
+
+# Temporary files from local release inspection
+_release_branch/
+_release_index.html
